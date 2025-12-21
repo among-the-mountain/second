@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>宿舍报修管理系统 - 项目开发与部署文档</title>
+  <style>
+    body { font-family: "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif; font-size:12pt; color:#000; line-height:1.6; }
+    .title { font-size:18pt; font-weight:700; margin-bottom:6px; }
+    .meta { margin-bottom:12px; }
+    .section { font-size:14pt; font-weight:700; margin-top:18px; margin-bottom:6px; }
+    .subsection { font-size:13pt; font-weight:700; margin-top:12px; margin-bottom:6px; }
+    p { margin:6px 0; }
+    ul { margin:6px 0 6px 20px; }
+    .codebox { border:1px solid #000; background:#efefef; padding:8px; margin:8px 0; }
+    pre { margin:0; font-family: "Consolas", "Courier New", monospace; font-size:10.5pt; white-space:pre-wrap; word-wrap:break-word; }
+    .smallnote { font-size:10pt; color:#333; }
+  </style>
+</head>
+<body>
+
+  <div class="title">宿舍报修管理系统 - 项目开发与部署文档</div>
+
+  <div class="meta">
+    文档版本： 1.0<br/>
+    日期： 2025年12月22日
+  </div>
+
+  <div class="section">1. 项目简介</div>
+  <p>本项目是一个基于 Flask (Python) 和 openGauss 数据库的宿舍报修管理系统。系统旨在为学校宿舍提供便捷的报修服务，涵盖学生报修、维修人员管理、宿舍信息管理以及报修状态统计等功能。</p>
+
+  <div class="subsection">1.1 核心功能</div>
+  <ul>
+    <li>学生管理：录入、查询、修改和删除学生信息。</li>
+    <li>宿舍管理：管理宿舍楼号、容量及当前入住情况。</li>
+    <li>报修管理：学生提交报修申请，管理员指派维修人员，更新维修状态（待处理、进行中、已完成）。</li>
+    <li>维修人员管理：管理维修工信息及其工作状态。</li>
+    <li>统计分析：按宿舍或维修人员统计报修数量和完成率。</li>
+  </ul>
+
+  <div class="section">2. 系统架构与技术栈</div>
+
+  <div class="subsection">2.1 技术选型</div>
+  <ul>
+    <li>后端框架：Flask 2.3.0 (Python 3.7+)</li>
+    <li>数据库：openGauss 5.0.0 (企业级开源关系型数据库)</li>
+    <li>数据库驱动：psycopg2-binary</li>
+    <li>前端技术：HTML5, CSS3, JavaScript (原生)</li>
+    <li>部署架构：Windows 客户端 (Flask) + Linux 数据库服务器 (openGauss)</li>
+  </ul>
+
+  <div class="subsection">2.2 网络拓扑</div>
+  <p>由于 openGauss 部署在远程 Linux 服务器上，本地 Windows 开发环境通过 SSH 隧道 (SSH Tunnel) 进行安全连接。</p>
+  <ul>
+    <li>本地应用：运行在 localhost:5000</li>
+    <li>SSH 隧道：监听本地 26000 端口 -> 转发至远程 127.0.0.1:26000</li>
+    <li>远程数据库：监听远程服务器的 127.0.0.1:26000</li>
+  </ul>
+
+  <div class="section">3. 数据库设计</div>
+
+  <div class="subsection">3.1 数据表结构 (init.sql)</div>
+  <p>系统包含三张核心基础表：dorm (宿舍), stu (学生), staff (维修人员)，以及一张业务表 rep (报修单)。</p>
+  <p>建表语句摘要：</p>
+
+  <div class="codebox">
+    <pre>
+-- 宿舍表
+CREATE TABLE dorm (
+  did SERIAL PRIMARY KEY,
+  dno VARCHAR(20) NOT NULL UNIQUE, -- 宿舍号
+  cap INTEGER NOT NULL CHECK (cap &gt; 0),
+  building VARCHAR(50) DEFAULT '1号楼'
+);
+
+-- 学生表
+CREATE TABLE stu (
+  sid SERIAL PRIMARY KEY,
+  sno VARCHAR(20) NOT NULL UNIQUE, -- 学号
+  sname VARCHAR(50) NOT NULL,
+  did INTEGER,
+  FOREIGN KEY (did) REFERENCES dorm(did) ON DELETE SET NULL
+);
+
+-- 维修人员表
+CREATE TABLE staff (
+  staff_id SERIAL PRIMARY KEY,
+  tno VARCHAR(20) NOT NULL UNIQUE, -- 工号
+  tname VARCHAR(50) NOT NULL,
+  role VARCHAR(30) DEFAULT '维修工'
+);
+    </pre>
+  </div>
+
+  <div class="subsection">3.2 存储过程与触发器 (procedures.sql)</div>
+  <p>为了保证数据一致性，系统使用了存储过程处理报修逻辑。</p>
+  <p>提交报修存储过程：</p>
+
+  <div class="codebox">
+    <pre>
+CREATE OR REPLACE PROCEDURE submit_repair(
+  p_sid INTEGER,
+  p_detail TEXT
+) AS $$
+DECLARE
+  v_did INTEGER;
+BEGIN
+  -- 1. 获取学生所在的宿舍ID
+  SELECT did INTO v_did FROM stu WHERE sid = p_sid;
+  IF v_did IS NULL THEN
+    RAISE EXCEPTION '该学生未分配宿舍，无法报修';
+  END IF;
+
+  -- 2. 插入报修记录
+  INSERT INTO rep (sid, did, detail, status)
+  VALUES (p_sid, v_did, p_detail, 'pending');
+END;
+$$;
+    </pre>
+  </div>
+
+  <div class="section">4. 环境配置与安装</div>
+
+  <div class="subsection">4.1 依赖安装</div>
+  <p>在项目根目录下，使用 pip 安装 Python 依赖包。</p>
+  <p>requirements.txt 内容：</p>
+
+  <div class="codebox">
+    <pre>
+Flask==2.3.0
+psycopg2-binary==2.9.6
+python-dotenv==1.0.0
+    </pre>
+  </div>
+
+  <p>安装命令：</p>
+
+  <div class="codebox">
+    <pre>
+pip install -r requirements.txt
+    </pre>
+  </div>
+
+  <div class="subsection">4.2 配置文件 (config.py)</div>
+  <p>配置文件根据操作系统自动判断环境。在 Windows 上默认使用 cloud 模式（通过 TCP/IP 连接），在 Linux 上使用 local 模式（通过 Unix Socket 连接）。</p>
+  <p>关键配置代码：</p>
+
+  <div class="codebox">
+    <pre>
+import os
+
+class Config:
+    # Windows 默认使用 cloud 配置
+    ENV = os.getenv('FLASK_ENV', 'cloud' if os.name == 'nt' else 'local')
+    DB_CONFIG = {
+        'cloud': {
+            'host': '127.0.0.1',  # 指向 SSH 隧道映射的本地地址
+            'port': 26000,        # 隧道端口
+            'database': 'dormdb',
+            'user': 'appuser',
+            'password': 'Appuser_2025X1'
+        }
+        # ... local 配置省略
+    }
+    </pre>
+  </div>
+
+  <div class="section">5. 运行指南</div>
+
+  <div class="subsection">5.1 步骤一：建立 SSH 隧道</div>
+  <p>在运行 Flask 应用之前，必须先建立 SSH 隧道，将远程数据库端口映射到本地。</p>
+  <p>在 PowerShell 或 CMD 中运行：</p>
+
+  <div class="codebox">
+    <pre>
+ssh -N -L 26000:127.0.0.1:26000 root@120.46.x.x
+    </pre>
+  </div>
+
+  <p class="smallnote">注：运行后该窗口会保持挂起状态，请勿关闭。</p>
+
+  <div class="subsection">5.2 步骤二：启动 Flask 应用</div>
+  <p>打开一个新的终端窗口，进入项目目录并运行应用。</p>
+  <p>启动命令：</p>
+
+  <div class="codebox">
+    <pre>
+python app.py
+    </pre>
+  </div>
+
+  <p>成功输出示例：</p>
+
+  <div class="codebox">
+    <pre>
+* Serving Flask app 'app'
+* Debug mode: on
+* Running on http://127.0.0.1:5000
+    </pre>
+  </div>
+
+  <div class="subsection">5.3 步骤三：访问系统</div>
+  <p>打开浏览器访问： http://127.0.0.1:5000</p>
+
+  <div class="section">6. 常见问题排查 (Troubleshooting)</div>
+
+  <div class="subsection">6.1 数据库连接失败 (SCRAM/MD5 错误)</div>
+  <p>现象：报错 authentication method 10 not supported。</p>
+  <p>原因：psycopg2 旧版本不完全支持 openGauss 默认的 sha256 加密。</p>
+  <p>解决方案：已在服务器端将 password_encryption_type 修改为 1 (MD5)，并重置了用户密码。</p>
+
+  <div class="subsection">6.2 无法加载静态资源</div>
+  <p>现象：页面样式丢失。</p>
+  <p>检查：确保 css 和 js 目录结构正确，且 HTML 文件中引用路径为 {{ url_for('static', filename='...') }} （此处在模板中使用）。</p>
+
+  <div class="subsection">6.3 报修提交失败</div>
+  <p>现象：提示“该学生未分配宿舍”。</p>
+  <p>原因：报修逻辑依赖学生表中的 did 字段。</p>
+  <p>解决：请先在学生管理页面为该学生分配宿舍。</p>
+
+  <p style="margin-top:18px; font-weight:700;">文档结束</p>
+
+</body>
+</html>
